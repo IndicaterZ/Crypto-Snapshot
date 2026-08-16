@@ -96,12 +96,16 @@ def update_excel(binance_data, bitkub_data):
         # Bitkub
         if i < len(bitkub_data):
             ws.cell(row=row, column=2).value = bitkub_data[i]['symbol']
-            ws.cell(row=row, column=3).value = bitkub_data[i]['quoteVolume']
+            c = ws.cell(row=row, column=3)
+            c.value = bitkub_data[i]['quoteVolume']
+            c.number_format = '#,##0.00'
             
         # Binance TH
         if i < len(binance_data):
             ws.cell(row=row, column=4).value = binance_data[i]['symbol']
-            ws.cell(row=row, column=5).value = binance_data[i]['quoteVolume']
+            c = ws.cell(row=row, column=5)
+            c.value = binance_data[i]['quoteVolume']
+            c.number_format = '#,##0.00'
 
     # 2. Historical Section
     ws.cell(row=13, column=1).value = "Date"
@@ -125,6 +129,7 @@ def update_excel(binance_data, bitkub_data):
     for d in binance_data:
         all_current_coins.append((d['symbol'], d['lastPrice']))
         
+    # Track all coins for historical data
     # Ensure all current coins have a column
     next_avail_col = max_col + 1
     for symbol, _ in all_current_coins:
@@ -147,17 +152,21 @@ def update_excel(binance_data, bitkub_data):
     current_date = datetime.now(th_tz).day
     ws.cell(row=next_row, column=1).value = current_date
 
-    # Write prices and formulas
+    # Write prices for all coins and formulas for BTC only
     for symbol, price in all_current_coins:
         price_col = header_map[symbol]
-        ws.cell(row=next_row, column=price_col).value = price
+        c_price = ws.cell(row=next_row, column=price_col)
+        c_price.value = price
+        c_price.number_format = '#,##0.00'
         
-        # Write formula for BTC
+        # Write formula for 7-day average ONLY for BTC
         if "BTC" in symbol:
             if next_row >= 20: # 14 + 6 = 20, meaning we have 7 days of rows
                 col_letter = get_column_letter(price_col)
                 formula = f"=AVERAGE({col_letter}{next_row-6}:{col_letter}{next_row})"
-                ws.cell(row=next_row, column=price_col+1).value = formula
+                c_avg = ws.cell(row=next_row, column=price_col+1)
+                c_avg.value = formula
+                c_avg.number_format = '#,##0.00'
 
     wb.save(EXCEL_FILE)
     print(f"Successfully updated {EXCEL_FILE} with new format.")
