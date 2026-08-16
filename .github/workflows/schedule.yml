@@ -1,0 +1,39 @@
+name: Daily Crypto Volume Snapshot
+
+on:
+  schedule:
+    # 05:00 UTC is 12:00 PM (Noon) in Thailand (UTC+7)
+    - cron: '0 5 * * *'
+  # Allow manual trigger from the GitHub Actions tab
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run-snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+          
+      - name: Run Snapshot Script
+        run: python snapshot.py
+        
+      - name: Commit updated Excel file
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crypto_volume.xlsx
+          # Only commit if there are changes to the excel file
+          git diff --staged --quiet || git commit -m "chore: update crypto volume snapshot"
+          git push
