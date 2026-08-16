@@ -3,33 +3,29 @@ import os
 import concurrent.futures
 from datetime import datetime, timezone, timedelta
 from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
 
 EXCEL_FILE = "crypto_volume.xlsx"
 
 def get_binance_th_top_5():
     try:
-        # First get exchange info to find all THB pairs
         exchange_info = requests.get('https://api.binance.th/api/v1/exchangeInfo')
         exchange_info.raise_for_status()
         symbols = [s['symbol'] for s in exchange_info.json()['symbols'] if s['symbol'].endswith('THB')]
         
-        # Function to get ticker for a single symbol
         def fetch_ticker(symbol):
             try:
                 resp = requests.get(f'https://api.binance.th/api/v1/ticker/24hr?symbol={symbol}')
                 resp.raise_for_status()
                 return resp.json()
-            except Exception as e:
-                print(f"Failed to fetch {symbol}: {e}")
+            except Exception:
                 return None
                 
-        # Fetch all tickers concurrently
         tickers = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             results = executor.map(fetch_ticker, symbols)
             tickers = [t for t in results if t is not None]
         
-        # Filter and parse THB pairs
         thb_pairs = []
         for t in tickers:
             try:
@@ -39,20 +35,8 @@ def get_binance_th_top_5():
             except (ValueError, KeyError):
                 continue
         
-        # Sort by quoteVolume descending
         thb_pairs.sort(key=lambda x: x['quoteVolume'], reverse=True)
-        top_5 = thb_pairs[:5]
-        
-        results = []
-        for i, pair in enumerate(top_5):
-            results.append({
-                'Exchange': 'Binance TH',
-                'Rank': i + 1,
-                'Symbol': pair['symbol'],
-                'Volume (THB)': pair['quoteVolume'],
-                'Price (THB)': pair['lastPrice']
-            })
-        return results
+        return thb_pairs[:5]
     except Exception as e:
         print(f"Error fetching Binance TH data: {e}")
         return []
@@ -78,23 +62,12 @@ def get_bitkub_top_5():
                     continue
                     
         thb_pairs.sort(key=lambda x: x['quoteVolume'], reverse=True)
-        top_5 = thb_pairs[:5]
-        
-        results = []
-        for i, pair in enumerate(top_5):
-            results.append({
-                'Exchange': 'Bitkub',
-                'Rank': i + 1,
-                'Symbol': pair['symbol'],
-                'Volume (THB)': pair['quoteVolume'],
-                'Price (THB)': pair['lastPrice']
-            })
-        return results
+        return thb_pairs[:5]
     except Exception as e:
         print(f"Error fetching Bitkub data: {e}")
         return []
 
-def save_to_excel(data):
+def update_excel(binance_data, bitkub_data):
     if os.path.exists(EXCEL_FILE):
         wb = load_workbook(EXCEL_FILE)
         ws = wb.active
@@ -102,29 +75,95 @@ def save_to_excel(data):
         wb = Workbook()
         ws = wb.active
         ws.title = "Volume Snapshot"
-        headers = ["Date", "Exchange", "Rank", "Symbol", "Volume (THB)", "Price (THB)"]
-        ws.append(headers)
     
-    th_tz = timezone(timedelta(hours=7))
-    current_time = datetime.now(th_tz).strftime("%Y-%m-%d %H:%M:%S")
-    
-    for item in data:
-        row = [
-            current_time,
-            item['Exchange'],
-            item['Rank'],
-            item['Symbol'],
-            item['Volume (THB)'],
-            item['Price (THB)']
-        ]
-        ws.append(row)
+    # 1. Update Top Section (Rows 1-6)
+    # Clear the area first just in case
+    for row in range(1, 7):
+        for col in range(1, 6):
+            ws.cell(row=row, column=col).value = None
+
+    # Headers for top section
+    ws.cell(row=1, column=2).value = "Bitkub"
+    ws.cell(row=1, column=3).value = "Ave. daily vol. (THB)"
+    ws.cell(row=1, column=4).value = "Binance TH"
+    ws.cell(row=1, column=5).value = "Ave. daily vol. (THB)"
+
+    # Write Top 5 data
+    for i in range(5):
+        row = i + 2
+        ws.cell(row=row, column=1).value = i + 1
         
+        # Bitkub
+        if i < len(bitkub_data):
+            ws.cell(row=row, column=2).value = bitkub_data[i]['symbol']
+            ws.cell(row=row, column=3).value = bitkub_data[i]['quoteVolume']
+            
+        # Binance TH
+        if i < len(binance_data):
+            ws.cell(row=row, column=4).value = binance_data[i]['symbol']
+            ws.cell(row=row, column=5).value = binance_data[i]['quoteVolume']
+
+    # 2. Historical Section
+    ws.cell(row=13, column=1).value = "Date"
+    
+    # Read existing headers in row 13
+    header_map = {}
+    max_col = 1
+    for col in range(2, 100):
+        val = ws.cell(row=13, column=col).value
+        if val:
+            if not val.endswith("7d-Avg"): # Track only price columns in map
+                header_map[val] = col
+            max_col = max(max_col, col)
+        else:
+            break
+            
+    # Combine symbols from both exchanges
+    all_current_coins = []
+    for d in bitkub_data:
+        all_current_coins.append((d['symbol'], d['lastPrice']))
+    for d in binance_data:
+        all_current_coins.append((d['symbol'], d['lastPrice']))
+        
+    # Ensure all current coins have a column
+    next_avail_col = max_col + 1
+    for symbol, _ in all_current_coins:
+        if symbol not in header_map:
+            ws.cell(row=13, column=next_avail_col).value = symbol
+            header_map[symbol] = next_avail_col
+            next_avail_col += 1
+            # If BTC, add average column
+            if "BTC" in symbol:
+                ws.cell(row=13, column=next_avail_col).value = f"{symbol} 7d-Avg"
+                next_avail_col += 1
+
+    # Find next empty row for historical data (starting from 14)
+    next_row = 14
+    while ws.cell(row=next_row, column=1).value is not None:
+        next_row += 1
+
+    # Write Date
+    th_tz = timezone(timedelta(hours=7))
+    current_date = datetime.now(th_tz).day
+    ws.cell(row=next_row, column=1).value = current_date
+
+    # Write prices and formulas
+    for symbol, price in all_current_coins:
+        price_col = header_map[symbol]
+        ws.cell(row=next_row, column=price_col).value = price
+        
+        # Write formula for BTC
+        if "BTC" in symbol:
+            if next_row >= 20: # 14 + 6 = 20, meaning we have 7 days of rows
+                col_letter = get_column_letter(price_col)
+                formula = f"=AVERAGE({col_letter}{next_row-6}:{col_letter}{next_row})"
+                ws.cell(row=next_row, column=price_col+1).value = formula
+
     wb.save(EXCEL_FILE)
-    print(f"Successfully saved {len(data)} rows to {EXCEL_FILE}")
+    print(f"Successfully updated {EXCEL_FILE} with new format.")
 
 def main():
     print("Starting snapshot...")
-    # Fetch data concurrently for both exchanges
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         future_binance = executor.submit(get_binance_th_top_5)
         future_bitkub = executor.submit(get_bitkub_top_5)
@@ -132,12 +171,8 @@ def main():
         binance_data = future_binance.result()
         bitkub_data = future_bitkub.result()
     
-    all_data = binance_data + bitkub_data
-    if all_data:
-        save_to_excel(all_data)
-        print("Data snapshot complete.")
-        for item in all_data:
-            print(f"{item['Exchange']} #{item['Rank']} {item['Symbol']}: {item['Volume (THB)']:,.2f} THB")
+    if binance_data or bitkub_data:
+        update_excel(binance_data, bitkub_data)
     else:
         print("No data fetched. Check API connectivity.")
 
