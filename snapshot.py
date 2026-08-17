@@ -77,30 +77,25 @@ def update_excel(binance_data, bitkub_data):
         ws.title = "Volume Snapshot"
     
     # 1. Update Top Section (Rows 1-6)
-    # Clear the area first just in case
     for row in range(1, 7):
         for col in range(1, 6):
             ws.cell(row=row, column=col).value = None
 
-    # Headers for top section
     ws.cell(row=1, column=2).value = "Bitkub"
     ws.cell(row=1, column=3).value = "Ave. daily vol. (THB)"
     ws.cell(row=1, column=4).value = "Binance TH"
     ws.cell(row=1, column=5).value = "Ave. daily vol. (THB)"
 
-    # Write Top 5 data
     for i in range(5):
         row = i + 2
         ws.cell(row=row, column=1).value = i + 1
         
-        # Bitkub
         if i < len(bitkub_data):
             ws.cell(row=row, column=2).value = bitkub_data[i]['symbol']
             c = ws.cell(row=row, column=3)
             c.value = bitkub_data[i]['quoteVolume']
             c.number_format = '#,##0.00'
             
-        # Binance TH
         if i < len(binance_data):
             ws.cell(row=row, column=4).value = binance_data[i]['symbol']
             c = ws.cell(row=row, column=5)
@@ -112,35 +107,72 @@ def update_excel(binance_data, bitkub_data):
     
     # Read existing headers in row 13
     header_map = {}
-    max_col = 1
-    for col in range(2, 100):
+    bitkub_end_col = 1
+    binance_end_col = 1
+    
+    for col in range(2, 200):
         val = ws.cell(row=13, column=col).value
         if val:
-            if not val.endswith("7d-Avg"): # Track only price columns in map
+            if not val.endswith("7d-Avg"): 
                 header_map[val] = col
-            max_col = max(max_col, col)
-        else:
-            break
-            
-    # Combine symbols from both exchanges
-    all_current_coins = []
-    for d in bitkub_data:
-        all_current_coins.append((d['symbol'], d['quoteVolume']))
-    for d in binance_data:
-        all_current_coins.append((d['symbol'], d['quoteVolume']))
+            if val.startswith("THB_") or "7d-Avg" in val and "THB_" in val:
+                bitkub_end_col = max(bitkub_end_col, col)
+            else:
+                binance_end_col = max(binance_end_col, col)
+    
+    # Initialize ends if fresh sheet
+    if bitkub_end_col == 1:
+        bitkub_end_col = 1
+    if binance_end_col == 1:
+        binance_end_col = bitkub_end_col + 1 # At least leave a gap if empty
         
-    # Track all coins for historical data
-    # Ensure all current coins have a column
-    next_avail_col = max_col + 1
-    for symbol, _ in all_current_coins:
+    # Process Bitkub Coins (Insert them if new so they stay on the left)
+    for d in bitkub_data:
+        symbol = d['symbol']
         if symbol not in header_map:
-            ws.cell(row=13, column=next_avail_col).value = symbol
-            header_map[symbol] = next_avail_col
-            next_avail_col += 1
-            # If BTC, add average column
+            insert_col = bitkub_end_col + 1
+            if binance_end_col > 1:
+                # If Binance coins already exist to the right, we push them right
+                # to maintain the gap
+                ws.insert_cols(insert_col)
+                binance_end_col += 1
+                
+            ws.cell(row=13, column=insert_col).value = symbol
+            header_map[symbol] = insert_col
+            bitkub_end_col += 1
+            
             if "BTC" in symbol:
-                ws.cell(row=13, column=next_avail_col).value = f"{symbol} 7d-Avg"
-                next_avail_col += 1
+                insert_col = bitkub_end_col + 1
+                if binance_end_col > 1:
+                    ws.insert_cols(insert_col)
+                    binance_end_col += 1
+                ws.cell(row=13, column=insert_col).value = f"{symbol} 7d-Avg"
+                bitkub_end_col += 1
+                
+            # Re-read headers to update the map because shifting changes columns
+            header_map = {}
+            for col in range(2, 200):
+                val = ws.cell(row=13, column=col).value
+                if val and not val.endswith("7d-Avg"):
+                    header_map[val] = col
+
+    # Process Binance Coins (Append to the far right)
+    # Ensure there is a gap between bitkub and binance
+    if binance_end_col <= bitkub_end_col:
+        binance_end_col = bitkub_end_col + 1
+
+    for d in binance_data:
+        symbol = d['symbol']
+        if symbol not in header_map:
+            insert_col = binance_end_col + 1
+            ws.cell(row=13, column=insert_col).value = symbol
+            header_map[symbol] = insert_col
+            binance_end_col += 1
+            
+            if "BTC" in symbol:
+                insert_col = binance_end_col + 1
+                ws.cell(row=13, column=insert_col).value = f"{symbol} 7d-Avg"
+                binance_end_col += 1
 
     # Find next empty row for historical data (starting from 14)
     next_row = 14
@@ -152,19 +184,21 @@ def update_excel(binance_data, bitkub_data):
     current_date = datetime.now(th_tz).day
     ws.cell(row=next_row, column=1).value = current_date
 
-    # Write prices for all coins and formulas for BTC only
-    for symbol, price in all_current_coins:
-        price_col = header_map[symbol]
-        c_price = ws.cell(row=next_row, column=price_col)
-        c_price.value = price
-        c_price.number_format = '#,##0.00'
+    # Write volumes and formulas for all current coins
+    all_current_coins = [(d['symbol'], d['quoteVolume']) for d in bitkub_data] + [(d['symbol'], d['quoteVolume']) for d in binance_data]
+    
+    for symbol, vol in all_current_coins:
+        vol_col = header_map[symbol]
+        c_vol = ws.cell(row=next_row, column=vol_col)
+        c_vol.value = vol
+        c_vol.number_format = '#,##0.00'
         
         # Write formula for 7-day average ONLY for BTC
         if "BTC" in symbol:
             if next_row >= 20: # 14 + 6 = 20, meaning we have 7 days of rows
-                col_letter = get_column_letter(price_col)
+                col_letter = get_column_letter(vol_col)
                 formula = f"=AVERAGE({col_letter}{next_row-6}:{col_letter}{next_row})"
-                c_avg = ws.cell(row=next_row, column=price_col+1)
+                c_avg = ws.cell(row=next_row, column=vol_col+1)
                 c_avg.value = formula
                 c_avg.number_format = '#,##0.00'
 
