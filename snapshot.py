@@ -125,9 +125,9 @@ def update_excel(binance_data, bitkub_data):
     # Combine symbols from both exchanges
     all_current_coins = []
     for d in bitkub_data:
-        all_current_coins.append((d['symbol'], d['lastPrice']))
+        all_current_coins.append((d['symbol'], d['quoteVolume']))
     for d in binance_data:
-        all_current_coins.append((d['symbol'], d['lastPrice']))
+        all_current_coins.append((d['symbol'], d['quoteVolume']))
         
     # Track all coins for historical data
     # Ensure all current coins have a column
