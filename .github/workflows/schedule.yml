@@ -39,4 +39,5 @@ jobs:
           git add crypto_volume.xlsx
           # Only commit if there are changes to the excel file
           git diff --staged --quiet || git commit -m "chore: update crypto volume snapshot"
-          git push
+          git pull --rebase origin main
+          git push origin main
