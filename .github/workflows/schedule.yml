@@ -27,6 +27,9 @@ jobs:
         run: pip install -r requirements.txt
           
       - name: Run Snapshot Script
+        env:
+          INNVX_API_KEY: ${{ secrets.INNVX_API_KEY }}
+          INNVX_API_SECRET: ${{ secrets.INNVX_API_SECRET }}
         run: python snapshot.py
         
       - name: Commit updated Excel file
