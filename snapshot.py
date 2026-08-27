@@ -5,6 +5,7 @@ import hmac
 import hashlib
 import time
 import uuid
+import json
 from datetime import datetime, timezone, timedelta
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
@@ -105,17 +106,16 @@ def get_innovestx_data():
         print("InnovestX API keys not found in environment variables.")
         return []
         
-    try:
+    def make_request(method, path, body_dict=None):
         timestamp = str(int(time.time() * 1000))
         uid = str(uuid.uuid4())
-        method = "GET"
-        path = "/api/v1/digital-asset/symbols" # Endpoint might need to be adjusted based on actual docs
         host = "api.innovestxonline.com"
         query = ""
         content_type = "application/json"
-        body = ""
         
-        content_to_sign = f"{api_key}{method}{host}{path}{query}{content_type}{uid}{timestamp}{body}"
+        body_str = json.dumps(body_dict) if body_dict else ""
+        
+        content_to_sign = f"{api_key}{method.upper()}{host}{path}{query}{content_type}{uid}{timestamp}{body_str}"
         signature = hmac.new(
             api_secret.encode('utf-8'),
             content_to_sign.encode('utf-8'),
@@ -131,28 +131,51 @@ def get_innovestx_data():
             'Accept': 'application/json'
         }
         
-        response = requests.get(f'https://{host}{path}', headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        
-        thb_pairs = []
-        items = data.get('data', data) if isinstance(data, dict) else data
+        url = f'https://{host}{path}'
+        if method.upper() == "GET":
+            resp = requests.get(url, headers=headers)
+        else:
+            resp = requests.post(url, headers=headers, data=body_str)
+            
+        resp.raise_for_status()
+        return resp.json()
+
+    try:
+        # 1. Fetch all symbols
+        sym_resp = make_request("GET", "/api/v1/digital-asset/symbols")
+        items = sym_resp.get('data', sym_resp) if isinstance(sym_resp, dict) else sym_resp
+        thb_symbols = []
         for d in items:
-            symbol = str(d.get('symbol', ''))
-            if symbol.endswith('THB') or symbol.startswith('THB_'):
-                try:
-                    quote_vol = float(d.get('quoteVolume', 0))
-                    last_price = float(d.get('lastPrice', 0))
-                    thb_pairs.append({
+            s = str(d.get('symbol', ''))
+            if s.endswith('THB') or s.startswith('THB_'):
+                thb_symbols.append(s)
+                
+        # 2. Fetch ticker for each symbol
+        def fetch_ticker(symbol):
+            try:
+                data = make_request("POST", "/api/v1/digital-asset/ticker/subscribe", {"symbol": symbol})
+                ticker_data = data.get('data', [])
+                if ticker_data and len(ticker_data) > 0:
+                    # Take the first/latest item
+                    item = ticker_data[0]
+                    vol = float(item.get('volume', 0))
+                    price = float(item.get('close', item.get('lastTradePrice', 0)))
+                    return {
                         'symbol': symbol,
-                        'quoteVolume': quote_vol,
-                        'lastPrice': last_price
-                    })
-                except (ValueError, KeyError):
-                    continue
-                    
-        thb_pairs.sort(key=lambda x: x['quoteVolume'], reverse=True)
-        return thb_pairs
+                        'quoteVolume': vol,
+                        'lastPrice': price
+                    }
+            except Exception as e:
+                pass
+            return None
+
+        tickers = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            results = executor.map(fetch_ticker, thb_symbols)
+            tickers = [t for t in results if t is not None]
+            
+        tickers.sort(key=lambda x: x['quoteVolume'], reverse=True)
+        return tickers
     except Exception as e:
         print(f"Error fetching InnovestX data: {e}")
         return []
