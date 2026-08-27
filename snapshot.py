@@ -141,43 +141,12 @@ def get_innovestx_data():
         return resp.json()
 
     try:
-        # 1. Fetch all symbols
-        sym_resp = make_request("GET", "/api/v1/digital-asset/symbols")
-        print("DEBUG SYMBOLS RESP:", json.dumps(sym_resp)[:300]) # Debug print
-        items = sym_resp.get('data', sym_resp) if isinstance(sym_resp, dict) else sym_resp
-        thb_symbols = []
-        for d in items:
-            s = str(d.get('symbol', ''))
-            if s.endswith('THB') or s.startswith('THB_'):
-                thb_symbols.append(s)
-                
-        # 2. Fetch ticker for each symbol
-        def fetch_ticker(symbol):
-            try:
-                data = make_request("POST", "/api/v1/digital-asset/ticker/subscribe", {"symbol": symbol})
-                print(f"DEBUG TICKER {symbol}:", json.dumps(data)[:200]) # Debug print
-                ticker_data = data.get('data', [])
-                if ticker_data and len(ticker_data) > 0:
-                    # Take the first/latest item
-                    item = ticker_data[0]
-                    vol = float(item.get('volume', 0))
-                    price = float(item.get('close', item.get('lastTradePrice', 0)))
-                    return {
-                        'symbol': symbol,
-                        'quoteVolume': vol,
-                        'lastPrice': price
-                    }
-            except Exception as e:
-                print(f"DEBUG ERROR {symbol}:", e)
-            return None
-
-        tickers = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            results = executor.map(fetch_ticker, thb_symbols)
-            tickers = [t for t in results if t is not None]
-            
-        tickers.sort(key=lambda x: x['quoteVolume'], reverse=True)
-        return tickers
+        # 1. Fetch products
+        sym_resp = make_request("GET", "/api/v1/digital-asset/products")
+        print("DEBUG PRODUCTS RESP:", json.dumps(sym_resp)[:1000]) # Debug print
+        
+        # We will return empty for now until we see if products has the 24h volume
+        return []
     except Exception as e:
         print(f"Error fetching InnovestX data: {e}")
         return []
