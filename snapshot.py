@@ -99,53 +99,59 @@ def get_orbix_data():
         return []
 
 def get_innovestx_data():
-    api_key = os.environ.get('INNVX_API_KEY')
-    api_secret = os.environ.get('INNVX_API_SECRET')
-    
-    if not api_key or not api_secret:
-        print("InnovestX API keys not found in environment variables.")
-        return []
-        
-    def make_request(method, path, body_dict=None):
-        timestamp = str(int(time.time() * 1000))
-        uid = str(uuid.uuid4())
-        host = "api.innovestxonline.com"
-        query = ""
-        content_type = "application/json"
-        
-        body_str = json.dumps(body_dict) if body_dict else ""
-        
-        content_to_sign = f"{api_key}{method.upper()}{host}{path}{query}{content_type}{uid}{timestamp}{body_str}"
-        signature = hmac.new(
-            api_secret.encode('utf-8'),
-            content_to_sign.encode('utf-8'),
-            hashlib.sha256
-        ).hexdigest()
-        
-        headers = {
-            'X-INVX-APIKEY': api_key,
-            'X-INVX-SIGNATURE': signature,
-            'X-INVX-TIMESTAMP': timestamp,
-            'X-INVX-REQUEST-UID': uid,
-            'Content-Type': content_type,
-            'Accept': 'application/json'
-        }
-        
-        url = f'https://{host}{path}'
-        if method.upper() == "GET":
-            resp = requests.get(url, headers=headers)
-        else:
-            resp = requests.post(url, headers=headers, data=body_str)
-            
-        resp.raise_for_status()
-        return resp.json()
-
     try:
-        # InnovestX Open API does not provide a 24h ticker volume endpoint.
-        # It only provides 1-minute snapshots. We cannot construct a 24h volume from it easily.
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("Playwright is not installed. Please install it using 'pip install playwright' and 'playwright install chromium'")
         return []
+        
+    print("Scraping InnovestX website for 24h Volume...")
+    thb_pairs = []
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto("https://trade.innovestxonline.com/digitalassets")
+            page.wait_for_load_state("networkidle")
+            page.wait_for_timeout(3000)
+            
+            # Scroll down multiple times to load all coins
+            for _ in range(10):
+                page.mouse.wheel(0, 2000)
+                page.wait_for_timeout(500)
+                
+            content = page.evaluate("document.body.innerText")
+            lines = [line.strip() for line in content.split('\n') if line.strip()]
+            
+            try:
+                start_idx = lines.index("Volume (24h)") + 1
+                for i in range(start_idx, len(lines), 5):
+                    if i + 3 < len(lines):
+                        symbol = lines[i]
+                        if not symbol.endswith("/THB"):
+                            continue
+                        price_str = lines[i+1].replace(",", "")
+                        vol_thb_str = lines[i+3].replace(" THB", "").replace(",", "")
+                        try:
+                            price = float(price_str)
+                            vol = float(vol_thb_str)
+                            thb_pairs.append({
+                                'symbol': symbol.replace("/", ""),
+                                'quoteVolume': vol,
+                                'lastPrice': price
+                            })
+                        except ValueError:
+                            pass
+            except ValueError:
+                print("Could not find 'Volume (24h)' in the page text.")
+                
+            browser.close()
+            
+        thb_pairs.sort(key=lambda x: x['quoteVolume'], reverse=True)
+        print(f"Successfully scraped {len(thb_pairs)} coins from InnovestX.")
+        return thb_pairs
     except Exception as e:
-        print(f"Error fetching InnovestX data: {e}")
+        print(f"Error fetching InnovestX data via scraper: {e}")
         return []
 
 def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data):
