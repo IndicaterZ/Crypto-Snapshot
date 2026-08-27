@@ -141,11 +141,8 @@ def get_innovestx_data():
         return resp.json()
 
     try:
-        # 1. Fetch products
-        sym_resp = make_request("GET", "/api/v1/digital-asset/products")
-        print("DEBUG PRODUCTS RESP:", json.dumps(sym_resp)[:1000]) # Debug print
-        
-        # We will return empty for now until we see if products has the 24h volume
+        # InnovestX Open API does not provide a 24h ticker volume endpoint.
+        # It only provides 1-minute snapshots. We cannot construct a 24h volume from it easily.
         return []
     except Exception as e:
         print(f"Error fetching InnovestX data: {e}")
