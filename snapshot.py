@@ -143,6 +143,7 @@ def get_innovestx_data():
     try:
         # 1. Fetch all symbols
         sym_resp = make_request("GET", "/api/v1/digital-asset/symbols")
+        print("DEBUG SYMBOLS RESP:", json.dumps(sym_resp)[:300]) # Debug print
         items = sym_resp.get('data', sym_resp) if isinstance(sym_resp, dict) else sym_resp
         thb_symbols = []
         for d in items:
@@ -154,6 +155,7 @@ def get_innovestx_data():
         def fetch_ticker(symbol):
             try:
                 data = make_request("POST", "/api/v1/digital-asset/ticker/subscribe", {"symbol": symbol})
+                print(f"DEBUG TICKER {symbol}:", json.dumps(data)[:200]) # Debug print
                 ticker_data = data.get('data', [])
                 if ticker_data and len(ticker_data) > 0:
                     # Take the first/latest item
@@ -166,7 +168,7 @@ def get_innovestx_data():
                         'lastPrice': price
                     }
             except Exception as e:
-                pass
+                print(f"DEBUG ERROR {symbol}:", e)
             return None
 
         tickers = []
