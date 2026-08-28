@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV "/Users/s.s/.gemini/antigravity/scratch/crypto-snapshot/venv"
+set -gx VIRTUAL_ENV "/Users/s.s/Desktop/crypto-snapshot/venv"
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/bin" $PATH
