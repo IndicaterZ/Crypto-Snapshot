@@ -1,9 +1,6 @@
 name: Daily Crypto Volume Snapshot
 
 on:
-  schedule:
-    # 05:00 UTC is 12:00 PM (Noon) in Thailand (UTC+7)
-    - cron: '15 5 * * *'
   # Allow manual trigger from the GitHub Actions tab
   workflow_dispatch:
 
