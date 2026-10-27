@@ -154,7 +154,80 @@ def get_innovestx_data():
         print(f"Error fetching InnovestX data via scraper: {e}")
         return []
 
-def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data):
+def get_usdt_thb_rate(binance_data=None, bitkub_data=None):
+    if bitkub_data:
+        for item in bitkub_data:
+            if item.get('symbol') == 'THB_USDT' and item.get('lastPrice', 0) > 0:
+                return float(item['lastPrice'])
+    if binance_data:
+        for item in binance_data:
+            if item.get('symbol') == 'USDTTHB' and item.get('lastPrice', 0) > 0:
+                return float(item['lastPrice'])
+    try:
+        r = requests.get('https://api.binance.th/api/v1/ticker/24hr?symbol=USDTTHB', timeout=5)
+        if r.status_code == 200:
+            return float(r.json()['lastPrice'])
+    except Exception:
+        pass
+    return 33.7
+
+def get_quidax_data(usdt_thb_rate=33.7):
+    try:
+        print("Fetching Quidax USDT pairs...")
+        summary_resp = requests.get('https://openapi.quidax.io/exchange-open-api/api/v1/markets/summary', timeout=10)
+        summary_resp.raise_for_status()
+        summary_data = summary_resp.json().get('data', {})
+        
+        tickers_resp = requests.get('https://openapi.quidax.io/exchange-open-api/api/v1/markets/tickers', timeout=10)
+        tickers_resp.raise_for_status()
+        tickers_data = tickers_resp.json().get('data', {})
+        
+        pairs = []
+        seen = set()
+        
+        # Add USDT pairs from summary
+        for symbol, info in summary_data.items():
+            sym_upper = symbol.upper()
+            if sym_upper.endswith('USDT'):
+                try:
+                    quote_vol_usdt = float(info.get('quote_volume') or 0)
+                    last_price = float(info.get('last_price') or 0)
+                    quote_vol_thb = quote_vol_usdt * usdt_thb_rate
+                    pairs.append({
+                        'symbol': sym_upper,
+                        'quoteVolume': quote_vol_thb,
+                        'lastPrice': last_price
+                    })
+                    seen.add(sym_upper)
+                except (ValueError, TypeError):
+                    continue
+                    
+        # Add any remaining USDT pairs from tickers
+        for sym, val in tickers_data.items():
+            sym_upper = sym.upper()
+            if sym_upper.endswith('USDT') and sym_upper not in seen:
+                ticker = val.get('ticker', {})
+                try:
+                    base_vol = float(ticker.get('vol') or 0)
+                    last_price = float(ticker.get('last') or 0)
+                    quote_vol_usdt = base_vol * last_price
+                    quote_vol_thb = quote_vol_usdt * usdt_thb_rate
+                    pairs.append({
+                        'symbol': sym_upper,
+                        'quoteVolume': quote_vol_thb,
+                        'lastPrice': last_price
+                    })
+                except (ValueError, TypeError):
+                    continue
+                    
+        pairs.sort(key=lambda x: x['quoteVolume'], reverse=True)
+        print(f"Successfully fetched {len(pairs)} USDT pairs from Quidax (converted with rate {usdt_thb_rate:.2f} THB/USDT).")
+        return pairs
+    except Exception as e:
+        print(f"Error fetching Quidax data: {e}")
+        return []
+
+def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data, quidax_data):
     if os.path.exists(EXCEL_FILE):
         wb = load_workbook(EXCEL_FILE)
     else:
@@ -166,7 +239,7 @@ def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data):
     if "Volume Snapshot" in wb.sheetnames:
         del wb["Volume Snapshot"]
         
-    sheet_names = ["Top 5 Summary", "Bitkub", "Binance TH", "Orbix", "InnovestX"]
+    sheet_names = ["Top 5 Summary", "Bitkub", "Binance TH", "Orbix", "InnovestX", "Quidax"]
     for sn in sheet_names:
         if sn not in wb.sheetnames:
             wb.create_sheet(sn)
@@ -175,14 +248,15 @@ def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data):
     ws_summary = wb["Top 5 Summary"]
     # Clear existing summary
     for row in range(1, 10):
-        for col in range(1, 15):
+        for col in range(1, 18):
             ws_summary.cell(row=row, column=col).value = None
             
     headers = [
         ("Bitkub", 2), ("Ave. daily vol.", 3),
         ("Binance TH", 5), ("Ave. daily vol.", 6),
         ("Orbix", 8), ("Ave. daily vol.", 9),
-        ("InnovestX", 11), ("Ave. daily vol.", 12)
+        ("InnovestX", 11), ("Ave. daily vol.", 12),
+        ("Quidax", 14), ("Ave. daily vol.", 15)
     ]
     for text, col in headers:
         ws_summary.cell(row=1, column=col).value = text
@@ -191,7 +265,8 @@ def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data):
         (bitkub_data, 2),
         (binance_data, 5),
         (orbix_data, 8),
-        (innovestx_data, 11)
+        (innovestx_data, 11),
+        (quidax_data, 14)
     ]
 
     for i in range(5):
@@ -267,6 +342,7 @@ def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data):
     update_history_sheet("Binance TH", binance_data)
     update_history_sheet("Orbix", orbix_data)
     update_history_sheet("InnovestX", innovestx_data)
+    update_history_sheet("Quidax", quidax_data)
 
     wb.save(EXCEL_FILE)
     print(f"Successfully updated {EXCEL_FILE} with multi-sheet layout.")
@@ -283,9 +359,13 @@ def main():
         bitkub_data = f_bitkub.result()
         orbix_data = f_orbix.result()
         innovestx_data = f_innovestx.result()
+        
+    # Calculate USDT/THB rate from Binance TH / Bitkub and fetch Quidax USDT pairs
+    usdt_thb_rate = get_usdt_thb_rate(binance_data, bitkub_data)
+    quidax_data = get_quidax_data(usdt_thb_rate)
     
-    if any([binance_data, bitkub_data, orbix_data, innovestx_data]):
-        update_excel(bitkub_data, binance_data, orbix_data, innovestx_data)
+    if any([binance_data, bitkub_data, orbix_data, innovestx_data, quidax_data]):
+        update_excel(bitkub_data, binance_data, orbix_data, innovestx_data, quidax_data)
     else:
         print("No data fetched from any exchange.")
 
