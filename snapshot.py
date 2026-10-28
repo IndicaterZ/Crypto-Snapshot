@@ -239,7 +239,50 @@ def get_quidax_data(usdt_thb_rate=33.7):
         print(f"Error fetching Quidax data: {e}")
         return []
 
-def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data, quidax_data):
+def get_tokocrypto_data(usdt_thb_rate=33.7):
+    try:
+        print("Fetching Tokocrypto IDR pairs...")
+        url = 'https://www.tokocrypto.asia/api/v3/ticker/24hr'
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        # Find USDTIDR price to compute IDR -> THB rate
+        usdt_idr_price = 0.0
+        for item in data:
+            if item.get('symbol') == 'USDTIDR':
+                usdt_idr_price = float(item.get('lastPrice', 0))
+                break
+                
+        if usdt_idr_price <= 0:
+            usdt_idr_price = 18175.0
+            
+        idr_thb_rate = usdt_thb_rate / usdt_idr_price
+        
+        pairs = []
+        for item in data:
+            sym = item.get('symbol', '')
+            if sym.endswith('IDR') and not sym.endswith('BIDR'):
+                try:
+                    quote_vol_idr = float(item.get('quoteVolume', 0))
+                    last_price = float(item.get('lastPrice', 0))
+                    quote_vol_thb = quote_vol_idr * idr_thb_rate
+                    pairs.append({
+                        'symbol': sym,
+                        'quoteVolume': quote_vol_thb,
+                        'lastPrice': last_price
+                    })
+                except (ValueError, TypeError):
+                    continue
+                    
+        pairs.sort(key=lambda x: x['quoteVolume'], reverse=True)
+        print(f"Successfully fetched {len(pairs)} IDR pairs from Tokocrypto (converted with rate {idr_thb_rate:.8f} THB/IDR).")
+        return pairs
+    except Exception as e:
+        print(f"Error fetching Tokocrypto data: {e}")
+        return []
+
+def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data, quidax_data, tokocrypto_data):
     if os.path.exists(EXCEL_FILE):
         wb = load_workbook(EXCEL_FILE)
     else:
@@ -251,7 +294,7 @@ def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data, quidax_d
     if "Volume Snapshot" in wb.sheetnames:
         del wb["Volume Snapshot"]
         
-    sheet_names = ["Top 5 Summary", "Bitkub", "Binance TH", "Orbix", "InnovestX", "Quidax"]
+    sheet_names = ["Top 5 Summary", "Bitkub", "Binance TH", "Orbix", "InnovestX", "Quidax", "Tokocrypto"]
     for sn in sheet_names:
         if sn not in wb.sheetnames:
             wb.create_sheet(sn)
@@ -268,7 +311,7 @@ def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data, quidax_d
     ws_summary = wb["Top 5 Summary"]
     # Clear existing summary
     for row in range(1, 10):
-        for col in range(1, 18):
+        for col in range(1, 21):
             ws_summary.cell(row=row, column=col).value = None
             
     headers = [
@@ -276,7 +319,8 @@ def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data, quidax_d
         ("Binance TH", 5), ("Ave. daily vol.", 6),
         ("Orbix", 8), ("Ave. daily vol.", 9),
         ("InnovestX", 11), ("Ave. daily vol.", 12),
-        ("Quidax", 14), ("Ave. daily vol.", 15)
+        ("Quidax", 14), ("Ave. daily vol.", 15),
+        ("Tokocrypto", 17), ("Ave. daily vol.", 18)
     ]
     for text, col in headers:
         ws_summary.cell(row=1, column=col).value = text
@@ -286,7 +330,8 @@ def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data, quidax_d
         (binance_data, 5),
         (orbix_data, 8),
         (innovestx_data, 11),
-        (quidax_data, 14)
+        (quidax_data, 14),
+        (tokocrypto_data, 17)
     ]
 
     for i in range(5):
@@ -363,6 +408,7 @@ def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data, quidax_d
     update_history_sheet("Orbix", orbix_data)
     update_history_sheet("InnovestX", innovestx_data)
     update_history_sheet("Quidax", quidax_data)
+    update_history_sheet("Tokocrypto", tokocrypto_data)
 
     wb.save(EXCEL_FILE)
     print(f"Successfully updated {EXCEL_FILE} with multi-sheet layout.")
@@ -380,12 +426,13 @@ def main():
         orbix_data = f_orbix.result()
         innovestx_data = f_innovestx.result()
         
-    # Calculate USDT/THB rate from Binance TH / Bitkub and fetch Quidax USDT pairs
+    # Calculate USDT/THB rate from Binance TH / Bitkub and fetch Quidax & Tokocrypto
     usdt_thb_rate = get_usdt_thb_rate(binance_data, bitkub_data)
     quidax_data = get_quidax_data(usdt_thb_rate)
+    tokocrypto_data = get_tokocrypto_data(usdt_thb_rate)
     
-    if any([binance_data, bitkub_data, orbix_data, innovestx_data, quidax_data]):
-        update_excel(bitkub_data, binance_data, orbix_data, innovestx_data, quidax_data)
+    if any([binance_data, bitkub_data, orbix_data, innovestx_data, quidax_data, tokocrypto_data]):
+        update_excel(bitkub_data, binance_data, orbix_data, innovestx_data, quidax_data, tokocrypto_data)
     else:
         print("No data fetched from any exchange.")
 
