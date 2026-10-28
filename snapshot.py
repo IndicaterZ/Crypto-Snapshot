@@ -173,7 +173,7 @@ def get_usdt_thb_rate(binance_data=None, bitkub_data=None):
 
 def get_quidax_data(usdt_thb_rate=33.7):
     try:
-        print("Fetching Quidax USDT pairs...")
+        print("Fetching Quidax NGN pairs...")
         summary_resp = requests.get('https://openapi.quidax.io/exchange-open-api/api/v1/markets/summary', timeout=10)
         summary_resp.raise_for_status()
         summary_data = summary_resp.json().get('data', {})
@@ -182,17 +182,29 @@ def get_quidax_data(usdt_thb_rate=33.7):
         tickers_resp.raise_for_status()
         tickers_data = tickers_resp.json().get('data', {})
         
+        # Calculate NGN to THB rate using live USDT/NGN on Quidax and USDT/THB from local exchange
+        usdt_ngn_price = 0.0
+        if 'USDTNGN' in summary_data:
+            usdt_ngn_price = float(summary_data['USDTNGN'].get('last_price') or 0)
+        elif 'usdtngn' in tickers_data:
+            usdt_ngn_price = float(tickers_data['usdtngn'].get('ticker', {}).get('last') or 0)
+            
+        if usdt_ngn_price <= 0:
+            usdt_ngn_price = 1380.0
+            
+        ngn_thb_rate = usdt_thb_rate / usdt_ngn_price
+        
         pairs = []
         seen = set()
         
-        # Add USDT pairs from summary
+        # Add NGN pairs from summary
         for symbol, info in summary_data.items():
             sym_upper = symbol.upper()
-            if sym_upper.endswith('USDT'):
+            if sym_upper.endswith('NGN'):
                 try:
-                    quote_vol_usdt = float(info.get('quote_volume') or 0)
+                    quote_vol_ngn = float(info.get('quote_volume') or 0)
                     last_price = float(info.get('last_price') or 0)
-                    quote_vol_thb = quote_vol_usdt * usdt_thb_rate
+                    quote_vol_thb = quote_vol_ngn * ngn_thb_rate
                     pairs.append({
                         'symbol': sym_upper,
                         'quoteVolume': quote_vol_thb,
@@ -202,16 +214,16 @@ def get_quidax_data(usdt_thb_rate=33.7):
                 except (ValueError, TypeError):
                     continue
                     
-        # Add any remaining USDT pairs from tickers
+        # Add any remaining NGN pairs from tickers
         for sym, val in tickers_data.items():
             sym_upper = sym.upper()
-            if sym_upper.endswith('USDT') and sym_upper not in seen:
+            if sym_upper.endswith('NGN') and sym_upper not in seen:
                 ticker = val.get('ticker', {})
                 try:
                     base_vol = float(ticker.get('vol') or 0)
                     last_price = float(ticker.get('last') or 0)
-                    quote_vol_usdt = base_vol * last_price
-                    quote_vol_thb = quote_vol_usdt * usdt_thb_rate
+                    quote_vol_ngn = base_vol * last_price
+                    quote_vol_thb = quote_vol_ngn * ngn_thb_rate
                     pairs.append({
                         'symbol': sym_upper,
                         'quoteVolume': quote_vol_thb,
@@ -221,7 +233,7 @@ def get_quidax_data(usdt_thb_rate=33.7):
                     continue
                     
         pairs.sort(key=lambda x: x['quoteVolume'], reverse=True)
-        print(f"Successfully fetched {len(pairs)} USDT pairs from Quidax (converted with rate {usdt_thb_rate:.2f} THB/USDT).")
+        print(f"Successfully fetched {len(pairs)} NGN pairs from Quidax (converted with rate {ngn_thb_rate:.6f} THB/NGN).")
         return pairs
     except Exception as e:
         print(f"Error fetching Quidax data: {e}")
@@ -243,6 +255,14 @@ def update_excel(bitkub_data, binance_data, orbix_data, innovestx_data, quidax_d
     for sn in sheet_names:
         if sn not in wb.sheetnames:
             wb.create_sheet(sn)
+
+    # If Quidax sheet contains old USDT columns, reset it for NGN pairs
+    if "Quidax" in wb.sheetnames:
+        ws_q = wb["Quidax"]
+        col2_val = ws_q.cell(row=1, column=2).value
+        if col2_val and "USDT" in str(col2_val):
+            del wb["Quidax"]
+            wb.create_sheet("Quidax")
             
     # 1. Update Top Section (Top 5 Summary Sheet)
     ws_summary = wb["Top 5 Summary"]
